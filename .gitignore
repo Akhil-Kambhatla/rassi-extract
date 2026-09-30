@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# rassi-extract data, never commit
+/data/*
+!/data/in/
+!/data/out/
+/data/in/*
+!/data/in/.gitkeep
+!/data/in/*/
+/data/in/*/*
+!/data/in/*/.gitkeep
+/data/out/*
+!/data/out/.gitkeep
+cache/
+*.pdf
+!/tests/fixtures/*.pdf
+.env
