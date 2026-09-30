@@ -10,6 +10,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 INPUT_DIR = DATA_DIR / "in"
 OUTPUT_DIR = DATA_DIR / "out"
 CACHE_DIR = PROJECT_ROOT / "cache"
+EVAL_DIR = PROJECT_ROOT / "eval"
 
 RAW_DIRECTORY_NAME = "raw"
 RAW_PAGE_PATTERN = re.compile(r"^(?P<stem>.+)_page\d+\.json$")
@@ -20,6 +21,19 @@ class DataLayout:
     input_root: Path = INPUT_DIR
     output_root: Path = OUTPUT_DIR
     cache_root: Path = CACHE_DIR
+    eval_root: Path = EVAL_DIR
+
+    @property
+    def eval_cases_directory(self) -> Path:
+        return self.eval_root / "cases"
+
+    @property
+    def eval_results_directory(self) -> Path:
+        return self.eval_root / "results"
+
+    @property
+    def eval_cache_directory(self) -> Path:
+        return self.cache_root / "eval"
 
     def teacher_input_directory(self, teacher_code: str) -> Path:
         return self.input_root / teacher_code

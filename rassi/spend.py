@@ -54,7 +54,13 @@ def prices_for(model: str) -> dict:
 
 def cost_usd(model: str, usage: TokenUsage) -> float:
     prices = prices_for(model)
-    return (usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]) / 1_000_000
+    cached_input_tokens = min(usage.cached_input_tokens, usage.input_tokens)
+    uncached_input_tokens = usage.input_tokens - cached_input_tokens
+    return (
+        uncached_input_tokens * prices["input"]
+        + cached_input_tokens * prices["cached_input"]
+        + usage.output_tokens * prices["output"]
+    ) / 1_000_000
 
 
 def default_estimated_cost_per_page(model: str) -> float:

@@ -232,3 +232,5 @@ cache/
 *.pdf
 !/tests/fixtures/*.pdf
 .env
+!/eval/cases/*/crop.png
+eval/results/

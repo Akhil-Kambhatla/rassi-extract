@@ -1,12 +1,22 @@
 from rassi.schema import ItemExtraction, PageExtraction
 
 
-def make_item(item_number: int, agreement: str = "4", reason: str = "b", confidence: str = "5", mark_notes: str = "single circle per row") -> ItemExtraction:
+def make_item(
+    item_number: int,
+    agreement: str = "4",
+    reason: str = "b",
+    confidence: str = "5",
+    agreement_notes: str = "single circle",
+    reason_notes: str = "single circle",
+    confidence_notes: str = "single circle",
+) -> ItemExtraction:
     return ItemExtraction(
         item_number=item_number,
-        mark_notes=mark_notes,
+        agreement_notes=agreement_notes,
         agreement=agreement,
+        reason_notes=reason_notes,
         reason=reason,
+        confidence_notes=confidence_notes,
         confidence=confidence,
     )
 

@@ -24,6 +24,7 @@ class FakeResponses:
     def __init__(self):
         self.calls = []
         self.output_overrides: dict[str, str] = {}
+        self.cached_tokens = 0
 
     def create(self, **request):
         image_url = request["input"][0]["content"][1]["image_url"]
@@ -40,7 +41,7 @@ class FakeResponses:
                 input_tokens=1000,
                 output_tokens=500,
                 output_tokens_details=SimpleNamespace(reasoning_tokens=0),
-                input_tokens_details=SimpleNamespace(cached_tokens=0),
+                input_tokens_details=SimpleNamespace(cached_tokens=self.cached_tokens),
             ),
         )
 
@@ -94,9 +95,9 @@ def test_single_file_writes_every_output_named_from_the_stem(layout, fake_api):
         metrics = list(csv.DictReader(handle))
     assert [row["page_number"] for row in metrics] == ["1", "2", "3", "4"]
     assert [row["page_type"] for row in metrics] == ["header", "continuation", "header", "continuation"]
-    assert [row["sid"] for row in metrics] == ["101", "", "103", ""]
+    assert [row["sid"] for row in metrics] == ["101", "101", "103", "103"]
     assert all(row["cache_hit"] == "False" and row["retry_count"] == "0" and row["status"] == "ok" for row in metrics)
-    assert all(row["input_tokens"] == "1000" and row["cost_usd"] == "0.008" for row in metrics)
+    assert all(row["input_tokens"] == "1000" and row["cached_input_tokens"] == "0" and row["cost_usd"] == "0.008" for row in metrics)
     assert all(row["latency_seconds"] != "" for row in metrics)
     timing = manifest["timing_and_cost"]
     assert timing["pages_called"] == 4
@@ -244,6 +245,65 @@ def test_corrupt_pdf_is_recorded_and_the_run_continues(layout, fake_api, capsys,
     assert "failed_file" in captured.out
     assert "FAILED FILE:" in captured.out
     assert paths_for(layout, "020421_PD2_RASSI.pdf").wide_csv.is_file()
+
+
+def unreadable_count_pages(pdf_path: Path) -> int:
+    raise RuntimeError("format error")
+
+
+def test_unreadable_pdf_leaves_a_failed_file_manifest(layout, fake_api, capsys, monkeypatch):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    monkeypatch.setattr(cli, "count_pages", unreadable_count_pages)
+    assert cli.main(["extract", "--file", str(pdf)], layout) == cli.EXIT_INCOMPLETE
+    paths = paths_for(layout, "020421_PD1_RASSI.pdf")
+    assert paths.existing_files() == [paths.manifest_json]
+    manifest = json.loads(paths.manifest_json.read_text())
+    assert manifest["status"] == "failed_file"
+    assert manifest["path"].endswith("020421/020421_PD1_RASSI.pdf")
+    assert manifest["error"] == "RuntimeError: format error"
+    assert manifest["timestamp"]
+    assert "failure recorded in" in capsys.readouterr().err
+
+    monkeypatch.setattr(cli, "count_pages", lambda pdf_path: PAGES_PER_FILE)
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_OK
+    assert json.loads(paths.manifest_json.read_text())["status"] == "complete"
+    assert paths.wide_csv.is_file()
+
+
+def test_unreadable_pdf_in_a_dry_run_writes_nothing(layout, fake_api, monkeypatch):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    monkeypatch.setattr(cli, "count_pages", unreadable_count_pages)
+    assert cli.main(["extract", "--file", str(pdf), "--dry-run"], layout) == cli.EXIT_INCOMPLETE
+    assert not layout.output_root.exists()
+
+
+def test_page_two_metrics_row_carries_the_sid_of_its_page_one(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    fake_api.output_overrides["020421_PD1_RASSI.pdf|4"] = '{"not": "valid"}'
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_INCOMPLETE
+    rows = read_rows(paths_for(layout, "020421_PD1_RASSI.pdf").metrics_csv)
+    assert [(row["page_number"], row["status"], row["sid"]) for row in rows] == [
+        ("1", "ok", "101"),
+        ("2", "ok", "101"),
+        ("3", "ok", "103"),
+        ("4", "failed", "103"),
+    ]
+
+
+def test_cached_input_tokens_are_billed_at_the_cached_rate_and_reported(layout, fake_api, capsys):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    fake_api.cached_tokens = 600
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_OK
+    paths = paths_for(layout, "020421_PD1_RASSI.pdf")
+    rows = read_rows(paths.metrics_csv)
+    expected_cost = (400 * 2.00 + 600 * 0.20 + 500 * 12.00) / 1_000_000
+    assert all(row["cached_input_tokens"] == "600" for row in rows)
+    assert all(float(row["cost_usd"]) == pytest.approx(expected_cost) for row in rows)
+    manifest = json.loads(paths.manifest_json.read_text())
+    assert manifest["cached_input_tokens"] == 2400
+    assert manifest["pricing"]["prices_per_million_tokens"]["cached_input"] == 0.20
+    assert "long context surcharge" in manifest["pricing"]["long_context_surcharge"]
+    assert "cached input:      2,400 of the input tokens, billed at $0.20 per 1M" in capsys.readouterr().out
 
 
 def test_truly_corrupt_pdf_bytes_are_caught(layout, fake_api, capsys, monkeypatch):

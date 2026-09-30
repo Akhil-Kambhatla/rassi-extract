@@ -17,6 +17,7 @@ class PageMetric:
     page_type: str | None
     latency_seconds: float | None
     input_tokens: int
+    cached_input_tokens: int
     output_tokens: int
     reasoning_tokens: int
     cost_usd: float
@@ -26,15 +27,28 @@ class PageMetric:
     error: str
 
 
-def page_metrics(run: ExtractionRun, model: str) -> list[PageMetric]:
+def student_sid_by_page(run: ExtractionRun, selected_pages: list[int]) -> dict[int, str | None]:
+    read_sid = {result.page_number: result.extraction.sid for result in run.results}
+    sids: dict[int, str | None] = {}
+    for index in range(0, len(selected_pages), 2):
+        student_pages = selected_pages[index : index + 2]
+        header_sid = read_sid.get(student_pages[0])
+        for page_number in student_pages:
+            sids[page_number] = header_sid
+    return sids
+
+
+def page_metrics(run: ExtractionRun, model: str, selected_pages: list[int]) -> list[PageMetric]:
+    sid_by_page = student_sid_by_page(run, selected_pages)
     metrics = [
         PageMetric(
             page_number=result.page_number,
             status=PAGE_STATUS_OK,
-            sid=result.extraction.sid,
+            sid=sid_by_page.get(result.page_number),
             page_type=result.extraction.page_type,
             latency_seconds=result.latency_seconds,
             input_tokens=result.usage.input_tokens,
+            cached_input_tokens=result.usage.cached_input_tokens,
             output_tokens=result.usage.output_tokens,
             reasoning_tokens=result.usage.reasoning_tokens,
             cost_usd=result.cost_usd,
@@ -49,10 +63,11 @@ def page_metrics(run: ExtractionRun, model: str) -> list[PageMetric]:
         PageMetric(
             page_number=failure.page_number,
             status=PAGE_STATUS_FAILED,
-            sid=None,
+            sid=sid_by_page.get(failure.page_number),
             page_type=None,
             latency_seconds=failure.latency_seconds,
             input_tokens=failure.usage.input_tokens,
+            cached_input_tokens=failure.usage.cached_input_tokens,
             output_tokens=failure.usage.output_tokens,
             reasoning_tokens=failure.usage.reasoning_tokens,
             cost_usd=failure.cost_usd,
@@ -67,10 +82,11 @@ def page_metrics(run: ExtractionRun, model: str) -> list[PageMetric]:
         PageMetric(
             page_number=page_number,
             status=PAGE_STATUS_SKIPPED_FOR_SPEND,
-            sid=None,
+            sid=sid_by_page.get(page_number),
             page_type=None,
             latency_seconds=None,
             input_tokens=0,
+            cached_input_tokens=0,
             output_tokens=0,
             reasoning_tokens=0,
             cost_usd=0.0,

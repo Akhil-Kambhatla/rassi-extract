@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 SCHEMA_NAME = "rassi_page_extraction"
 
 ScaleValue = Literal["1", "2", "3", "4", "5", "6", "blank", "ambiguous", "multiple"]
@@ -13,9 +13,11 @@ class ItemExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_number: int = Field(description="The item number printed above this item's table.")
-    mark_notes: str = Field(description="Short description of what is physically drawn in this item's table, written before deciding values.")
+    agreement_notes: str = Field(description="What is physically drawn in row A only, written before deciding agreement.")
     agreement: ScaleValue = Field(description="Row A. Agreement, 1 Strongly Disagree to 6 Strongly Agree.")
+    reason_notes: str = Field(description="What is physically drawn in row B only, written before deciding reason.")
     reason: ReasonValue = Field(description="Row B. Reason, a to d only.")
+    confidence_notes: str = Field(description="What is physically drawn in row C only, written before deciding confidence.")
     confidence: ScaleValue = Field(description="Row C. Confidence, 1 Not At All Confident to 6 Very Confident.")
 
 

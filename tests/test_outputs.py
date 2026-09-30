@@ -22,7 +22,15 @@ SOURCE = parse_source_filename("020421_PD1_RASSI.pdf")
 
 def two_students():
     first_header_items = [make_item(number, agreement=str(number), reason="abcd"[(number - 1) % 4], confidence="6") for number in range(1, 7)]
-    first_header_items[2] = make_item(3, agreement="ambiguous", reason="blank", confidence="multiple", mark_notes="circle spans 3 and 4")
+    first_header_items[2] = make_item(
+        3,
+        agreement="ambiguous",
+        reason="blank",
+        confidence="multiple",
+        agreement_notes="circle spans 3 and 4",
+        reason_notes="no mark",
+        confidence_notes="circles on 2 and 5",
+    )
     return numbered(
         [
             header_page(sid="111111", items=list(reversed(first_header_items))),
@@ -74,6 +82,8 @@ def test_long_rows_one_per_value():
     assert q3["A"]["value"] == "ambiguous"
     assert q3["A"]["value_num"] == config.MISSING_VALUE_CODE
     assert q3["A"]["mark_notes"] == "circle spans 3 and 4"
+    assert q3["B"]["mark_notes"] == "no mark"
+    assert q3["C"]["mark_notes"] == "circles on 2 and 5"
     assert q3["A"]["page_number"] == 1
     q8 = {row["dimension"]: row for row in rows if row["sid"] == "111111" and row["item"] == 8}
     assert q8["A"]["value_num"] == 4
@@ -94,6 +104,12 @@ def test_flag_rows_include_values_and_identity_flags():
     assert ambiguous["dimension"] == "A"
     assert ambiguous["page_number"] == 1
     assert ambiguous["reason"] == "circle spans 3 and 4"
+    blank = next(row for row in rows if row["flag_type"] == "value_blank")
+    assert blank["dimension"] == "B"
+    assert blank["reason"] == "no mark"
+    multiple = next(row for row in rows if row["flag_type"] == "value_multiple")
+    assert multiple["dimension"] == "C"
+    assert multiple["reason"] == "circles on 2 and 5"
     assert all(set(row) == set(FLAG_COLUMNS) for row in rows)
 
 

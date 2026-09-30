@@ -20,6 +20,7 @@ METRICS_COLUMNS = [
     "page_type",
     "latency_seconds",
     "input_tokens",
+    "cached_input_tokens",
     "output_tokens",
     "reasoning_tokens",
     "cost_usd",
@@ -90,7 +91,7 @@ def build_long_rows(students: list[Student], model: str) -> list[dict]:
                         "dimension": dimension,
                         "value": value,
                         "value_num": numeric_value(dimension, value),
-                        "mark_notes": item.mark_notes,
+                        "mark_notes": getattr(item, f"{field_name}_notes"),
                         "page_number": page_number,
                         "model": model,
                     }
@@ -124,7 +125,7 @@ def build_flag_rows(students: list[Student], identity_flags: list[IdentityFlag])
                             "dimension": dimension,
                             "flag_type": f"value_{value}",
                             "value": value,
-                            "reason": item.mark_notes,
+                            "reason": getattr(item, f"{field_name}_notes"),
                         }
                     )
     return rows
@@ -167,6 +168,7 @@ def build_metrics_rows(metrics: list[PageMetric]) -> list[dict]:
             "page_type": metric.page_type or "",
             "latency_seconds": "" if metric.latency_seconds is None else round(metric.latency_seconds, 3),
             "input_tokens": metric.input_tokens,
+            "cached_input_tokens": metric.cached_input_tokens,
             "output_tokens": metric.output_tokens,
             "reasoning_tokens": metric.reasoning_tokens,
             "cost_usd": round(metric.cost_usd, 6),

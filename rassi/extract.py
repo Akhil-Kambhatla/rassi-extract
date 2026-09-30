@@ -97,12 +97,12 @@ def png_data_url(png_bytes: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
 
 
-def build_input(png_bytes: bytes) -> list[dict]:
+def build_input(png_bytes: bytes, user_instruction: str = USER_INSTRUCTION) -> list[dict]:
     return [
         {
             "role": "user",
             "content": [
-                {"type": "input_text", "text": USER_INSTRUCTION},
+                {"type": "input_text", "text": user_instruction},
                 {"type": "input_image", "image_url": png_data_url(png_bytes), "detail": IMAGE_DETAIL},
             ],
         }
@@ -142,8 +142,10 @@ class PageExtractor:
         log=print,
         sleep=time.sleep,
         clock=time.perf_counter,
+        user_instruction: str = USER_INSTRUCTION,
     ):
         self.client = client
+        self.user_instruction = user_instruction
         self.model = model
         self.cache = cache
         self.spend = spend
@@ -191,7 +193,7 @@ class PageExtractor:
             request = {
                 "model": self.model,
                 "instructions": SYSTEM_INSTRUCTIONS,
-                "input": build_input(png_bytes),
+                "input": build_input(png_bytes, self.user_instruction),
                 "text": {"format": structured_output_format()},
                 "store": False,
             }

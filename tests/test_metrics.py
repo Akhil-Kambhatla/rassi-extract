@@ -23,6 +23,7 @@ def metric(page_number: int, latency: float | None, cost: float, cache_hit: bool
         page_type=None,
         latency_seconds=latency,
         input_tokens=0 if cache_hit else 1000,
+        cached_input_tokens=0,
         output_tokens=0 if cache_hit else 500,
         reasoning_tokens=0,
         cost_usd=cost,

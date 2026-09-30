@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 import time
@@ -10,9 +11,11 @@ from dotenv import load_dotenv
 
 from rassi.cache import ResponseCache, cache_key
 from rassi.config import (
+    CACHED_INPUT_TOKENS_SOURCE,
     DEFAULT_MAX_SPEND_USD,
     DEFAULT_MODEL,
     DEFAULT_WORKERS,
+    LONG_CONTEXT_SURCHARGE_NOTE,
     RENDER_DPI,
 )
 from rassi.discover import (
@@ -24,6 +27,7 @@ from rassi.discover import (
     discover_teacher,
     output_collisions,
 )
+from rassi.eval_cli import add_eval_parser, run_eval
 from rassi.extract import ExtractionRun, PageExtractor, make_client
 from rassi.filename import SourceFileInfo
 from rassi.metrics import FilePages, PageMetric, TimingAndCost, page_metrics, timing_and_cost, timing_and_cost_lines
@@ -62,6 +66,8 @@ EXIT_USAGE_ERROR = 2
 EXIT_INCOMPLETE = 3
 EXIT_STRUCTURE_VIOLATION = 4
 
+STATUS_FAILED_FILE = "failed_file"
+
 STATUS_EXIT_CODES = {
     "complete": EXIT_OK,
     "dry_run": EXIT_OK,
@@ -69,7 +75,7 @@ STATUS_EXIT_CODES = {
     "skipped_error": EXIT_USAGE_ERROR,
     "incomplete": EXIT_INCOMPLETE,
     "not_started": EXIT_INCOMPLETE,
-    "failed_file": EXIT_INCOMPLETE,
+    STATUS_FAILED_FILE: EXIT_INCOMPLETE,
     "structure_violation": EXIT_STRUCTURE_VIOLATION,
 }
 
@@ -124,7 +130,32 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--dry-run", action="store_true", help="Render and estimate cost without calling the API")
     extract.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     extract.add_argument("--overwrite", action="store_true", help="Replace outputs that already exist in data/out")
+    add_eval_parser(subcommands)
     return parser
+
+
+def price_text(model: str) -> str:
+    prices = prices_for(model)
+    return (
+        f"${prices['input']:.2f} in / ${prices['cached_input']:.2f} cached in / "
+        f"${prices['output']:.2f} out per 1M tokens"
+    )
+
+
+def pricing_record(model: str) -> dict:
+    return {
+        "prices_per_million_tokens": prices_for(model),
+        "cached_input_tokens_source": CACHED_INPUT_TOKENS_SOURCE,
+        "long_context_surcharge": LONG_CONTEXT_SURCHARGE_NOTE,
+    }
+
+
+def token_lines(usage: TokenUsage, model: str, indent: str) -> list[str]:
+    cached_rate = prices_for(model)["cached_input"]
+    return [
+        f"{indent}tokens:            in {usage.input_tokens:,} / out {usage.output_tokens:,} (reasoning {usage.reasoning_tokens:,})",
+        f"{indent}cached input:      {usage.cached_input_tokens:,} of the input tokens, billed at ${cached_rate:.2f} per 1M",
+    ]
 
 
 def estimated_cost_per_call(model: str, cache: ResponseCache) -> tuple[float, str]:
@@ -163,7 +194,7 @@ def run_dry_run(
     print(f"  student count:   {len(rendered) / 2:g} (at 2 pages per student)")
     if len(rendered) % 2 != 0:
         print("  WARNING:         odd page count, the structure check will fail")
-    print(f"  model:           {model} (${prices_for(model)['input']:.2f} in / ${prices_for(model)['output']:.2f} out per 1M tokens)")
+    print(f"  model:           {model} ({price_text(model)})")
     print(f"  cached pages:    {len(rendered) - len(uncached_pages)}")
     print(f"  API calls:       {len(uncached_pages)}")
     print(f"  est. per call:   ${context.per_call_estimate:.4f} ({context.per_call_basis})")
@@ -236,9 +267,11 @@ def build_manifest(
         "cache_hits": run.cache_hits,
         "calls_made": spend.calls_made,
         "input_tokens": spend.usage.input_tokens,
+        "cached_input_tokens": spend.usage.cached_input_tokens,
         "output_tokens": spend.usage.output_tokens,
         "reasoning_tokens": spend.usage.reasoning_tokens,
         "total_cost_usd": round(spend.spent_usd, 6),
+        "pricing": pricing_record(model),
         "max_spend_usd": max_spend,
         "max_spend_scope": "invocation",
         "workers": stats.workers,
@@ -262,6 +295,7 @@ def print_summary(
     counts: dict[str, int],
     written: list[Path],
     stats: TimingAndCost,
+    model: str,
 ) -> None:
     print()
     print("SUMMARY")
@@ -270,7 +304,8 @@ def print_summary(
     print(f"  pages extracted:   {len(run.results)}")
     print(f"  cache hits:        {run.cache_hits}")
     print(f"  API calls:         {spend.calls_made}")
-    print(f"  tokens:            in {spend.usage.input_tokens:,} / out {spend.usage.output_tokens:,} (reasoning {spend.usage.reasoning_tokens:,})")
+    for line in token_lines(spend.usage, model, "  "):
+        print(line)
     print(f"  total cost:        ${spend.spent_usd:.4f}")
     if run.failed_pages:
         print(f"  failed pages:      {sorted(run.failed_pages)}")
@@ -300,11 +335,11 @@ def write_results(
     source = input_file.source
     removed = remove_outputs(paths)
     if removed:
-        print(f"--overwrite: removed {len(removed)} existing outputs for {paths.stem}")
+        print(f"removed {len(removed)} earlier outputs for {paths.stem}")
 
     pages = [(result.page_number, result.extraction) for result in run.results]
     majority_pre_post = file_pre_post(pages)
-    metrics = page_metrics(run, context.model)
+    metrics = page_metrics(run, context.model, selected_pages)
     file_pages = FilePages(metrics, selected_pages)
     stats = timing_and_cost(
         [file_pages], wall_clock_seconds, context.workers, (context.per_call_estimate, context.per_call_basis)
@@ -346,7 +381,7 @@ def write_results(
             source, context.model, context.max_spend, selected_pages, run, spend, status, 0, counts, [], majority_pre_post, stats
         )
         written += write_manifest_and_metrics(paths, manifest, metrics)
-        print_summary(status, 0, run, spend, counts, written, stats)
+        print_summary(status, 0, run, spend, counts, written, stats, context.model)
         return outcome(status, 0)
 
     violations = check_structure(pages)
@@ -361,7 +396,7 @@ def write_results(
             source, context.model, context.max_spend, selected_pages, run, spend, status, 0, {}, descriptions, majority_pre_post, stats
         )
         written += write_manifest_and_metrics(paths, manifest, metrics)
-        print_summary(status, 0, run, spend, {}, written, stats)
+        print_summary(status, 0, run, spend, {}, written, stats, context.model)
         return outcome(status, 0)
 
     students = pair_students(pages)
@@ -380,7 +415,7 @@ def write_results(
     )
     write_manifest_and_metrics(paths, manifest, metrics)
     written = [paths.wide_csv, paths.long_csv, paths.flags_csv, paths.metrics_csv, paths.manifest_json, paths.raw_directory]
-    print_summary(status, len(students), run, spend, counts, written, stats)
+    print_summary(status, len(students), run, spend, counts, written, stats, context.model)
     return outcome(status, len(students))
 
 
@@ -388,7 +423,7 @@ def process_file(input_file: InputFile, context: RunContext) -> FileOutcome:
     started = time.perf_counter()
     pdf_path = input_file.path
     paths = output_paths(input_file.source, context.layout)
-    existing_outputs = paths.existing_files()
+    existing_outputs = blocking_outputs(paths)
     if existing_outputs and not context.overwrite and not context.dry_run:
         print(f"SKIPPED: {display_path(pdf_path)}: outputs already exist; pass --overwrite to replace them:")
         for path in existing_outputs:
@@ -398,7 +433,7 @@ def process_file(input_file: InputFile, context: RunContext) -> FileOutcome:
     try:
         total_pages = count_pages(pdf_path)
     except Exception as error:
-        return unreadable_pdf(input_file, error)
+        return unreadable_pdf(input_file, error, paths, context)
     try:
         selected_pages = parse_page_selection(context.pages, total_pages)
     except ValueError as error:
@@ -409,7 +444,7 @@ def process_file(input_file: InputFile, context: RunContext) -> FileOutcome:
     try:
         rendered = render_pages(pdf_path, selected_pages)
     except Exception as error:
-        return unreadable_pdf(input_file, error)
+        return unreadable_pdf(input_file, error, paths, context)
 
     if context.dry_run:
         return run_dry_run(input_file, total_pages, rendered, context, existing_outputs)
@@ -421,10 +456,41 @@ def process_file(input_file: InputFile, context: RunContext) -> FileOutcome:
     return write_results(input_file, context, paths, selected_pages, run, file_spend, wall_clock_seconds)
 
 
-def unreadable_pdf(input_file: InputFile, error: Exception) -> FileOutcome:
+def manifest_status(manifest_path: Path) -> str | None:
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8")).get("status")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def blocking_outputs(paths: OutputPaths) -> list[Path]:
+    existing = paths.existing_files()
+    if existing == [paths.manifest_json] and manifest_status(paths.manifest_json) == STATUS_FAILED_FILE:
+        return []
+    return existing
+
+
+def failed_file_manifest(input_file: InputFile, reason: str) -> dict:
+    return {
+        "status": STATUS_FAILED_FILE,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "path": display_path(input_file.path),
+        "source_pdf": input_file.source.source_pdf,
+        "teacher_code": input_file.source.teacher_code,
+        "period": input_file.source.period,
+        "form": input_file.source.form,
+        "error": reason,
+    }
+
+
+def unreadable_pdf(input_file: InputFile, error: Exception, paths: OutputPaths, context: RunContext) -> FileOutcome:
     reason = f"{type(error).__name__}: {error}"
     print(f"FAILED: {display_path(input_file.path)}: could not read the PDF: {reason}", file=sys.stderr)
-    return FileOutcome(input_file=input_file, status="failed_file", error=reason)
+    if not context.dry_run:
+        remove_outputs(paths)
+        write_json(paths.manifest_json, failed_file_manifest(input_file, reason))
+        print(f"  failure recorded in {display_path(paths.manifest_json)}", file=sys.stderr)
+    return FileOutcome(input_file=input_file, status=STATUS_FAILED_FILE, error=reason)
 
 
 def discover_inputs(arguments: argparse.Namespace, layout: DataLayout) -> Discovery:
@@ -464,10 +530,10 @@ def print_run_summary(outcomes: list[FileOutcome], problem_count: int, context: 
         f"{total_calls:>10} {'$' + format(total_cost, '.4f'):>10}"
     )
     if not context.dry_run:
-        usage = context.spend.usage
-        print(f"  tokens:      in {usage.input_tokens:,} / out {usage.output_tokens:,} (reasoning {usage.reasoning_tokens:,})")
+        for line in token_lines(context.spend.usage, context.model, "  "):
+            print(line)
     print(f"  max spend:   ${context.max_spend:.2f} for the whole invocation")
-    failed_files = [outcome for outcome in outcomes if outcome.status == "failed_file"]
+    failed_files = [outcome for outcome in outcomes if outcome.status == STATUS_FAILED_FILE]
     for outcome in failed_files:
         print(f"  FAILED FILE: {display_path(outcome.input_file.path)}: {outcome.error}")
     if not context.dry_run:
@@ -586,4 +652,6 @@ def main(argv: list[str] | None = None, layout: DataLayout = DEFAULT_LAYOUT) -> 
     arguments = build_parser().parse_args(argv)
     if arguments.command == "extract":
         return run_extract(arguments, layout)
+    if arguments.command == "eval":
+        return run_eval(arguments, layout)
     return EXIT_USAGE_ERROR

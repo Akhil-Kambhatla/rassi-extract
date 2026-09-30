@@ -1,5 +1,6 @@
 import pytest
 
+from rassi.config import PRICES_PER_MILLION_TOKENS
 from rassi.render import parse_page_selection
 from rassi.spend import SpendTracker, TokenUsage, cost_usd
 
@@ -7,6 +8,18 @@ from rassi.spend import SpendTracker, TokenUsage, cost_usd
 def test_cost_uses_price_table():
     assert cost_usd("gpt-5.6-terra", TokenUsage(input_tokens=1_000_000, output_tokens=1_000_000)) == pytest.approx(14.00)
     assert cost_usd("gpt-5.6-luna", TokenUsage(input_tokens=1_000_000, output_tokens=1_000_000)) == pytest.approx(1.40)
+
+
+def test_price_table_rates():
+    assert PRICES_PER_MILLION_TOKENS["gpt-5.6-terra"] == {"input": 2.00, "cached_input": 0.20, "output": 12.00}
+    assert PRICES_PER_MILLION_TOKENS["gpt-5.6-luna"] == {"input": 0.20, "cached_input": 0.02, "output": 1.20}
+
+
+def test_cached_input_tokens_are_billed_at_the_cached_rate():
+    terra = TokenUsage(input_tokens=1_000_000, cached_input_tokens=400_000, output_tokens=0)
+    assert cost_usd("gpt-5.6-terra", terra) == pytest.approx(0.6 * 2.00 + 0.4 * 0.20)
+    luna = TokenUsage(input_tokens=1_000_000, cached_input_tokens=1_000_000, output_tokens=1_000_000)
+    assert cost_usd("gpt-5.6-luna", luna) == pytest.approx(0.02 + 1.20)
 
 
 def test_tracker_stops_before_exceeding_limit():
