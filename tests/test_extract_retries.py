@@ -6,6 +6,7 @@ import pytest
 
 from rassi.cache import ResponseCache
 from rassi.extract import PageExtractor
+from rassi.prompt import SYSTEM_INSTRUCTIONS
 from rassi.render import RenderedPage
 from rassi.spend import SpendTracker
 from tests.fakes import header_page
@@ -44,9 +45,11 @@ class ScriptedResponses:
     def __init__(self, script):
         self.script = list(script)
         self.attempts = 0
+        self.requests = []
 
     def create(self, **request):
         self.attempts += 1
+        self.requests.append(request)
         outcome = self.script.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -127,3 +130,15 @@ def test_invalid_response_is_not_cached(tmp_path):
     assert "returned 0 items" in run.failures[1].reason
     assert run.failures[1].cost_usd == pytest.approx(0.008)
     assert not any((tmp_path / "cache").rglob("*.json"))
+
+
+def test_request_sends_prompt_cache_key_with_instructions_before_image(tmp_path):
+    sleeps: list[float] = []
+    extractor, responses = make_extractor(tmp_path, [completed_response()], sleeps)
+    extractor.extract_pages([PAGE], 1, workers=1)
+    request = responses.requests[0]
+    assert request["prompt_cache_key"] == "rassi-page"
+    assert request["instructions"] == SYSTEM_INSTRUCTIONS
+    content = request["input"][0]["content"]
+    assert [part["type"] for part in content] == ["input_text", "input_image"]
+    assert content[-1]["type"] == "input_image"

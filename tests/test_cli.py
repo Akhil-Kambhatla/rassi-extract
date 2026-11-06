@@ -556,3 +556,14 @@ def test_dry_run_does_not_write_combined_outputs(layout, fake_api):
     pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
     assert cli.main(["extract", "--file", str(pdf), "--dry-run"], layout) == cli.EXIT_OK
     assert not layout.combined_output_directory.exists()
+
+
+def test_extract_max_spend_defaults_to_fifteen_dollars():
+    parser = cli.build_parser()
+    assert parser.parse_args(["extract"]).max_spend == 15.00
+    extract = next(action for action in parser._subparsers._group_actions[0].choices.values() if action.prog.endswith("extract"))
+    assert "(default: 15.00)" in " ".join(extract.format_help().split())
+
+
+def test_eval_run_max_spend_default_is_unchanged():
+    assert cli.build_parser().parse_args(["eval", "run"]).max_spend == 0.50

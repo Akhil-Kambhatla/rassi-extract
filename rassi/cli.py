@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("--teacher", default=None, help="Process one teacher folder, data/in/<teacher_code>")
     target.add_argument("--file", type=Path, default=None, help="Process one PDF, data/in/<teacher_code>/<teacher_code>_PD<period>_RASSI.pdf")
     extract.add_argument("--model", default=DEFAULT_MODEL)
-    extract.add_argument("--max-spend", type=float, default=DEFAULT_MAX_SPEND_USD, help="USD cap for the whole invocation, across all files")
+    extract.add_argument("--max-spend", type=float, default=DEFAULT_MAX_SPEND_USD, help="USD cap for the whole invocation, across all files (default: %(default).2f)")
     extract.add_argument("--pages", default=None, help="Subset of pages in each file, for example 1-4 or 1-2,5-6")
     extract.add_argument("--dry-run", action="store_true", help="Render and estimate cost without calling the API")
     extract.add_argument("--workers", type=int, default=DEFAULT_WORKERS)

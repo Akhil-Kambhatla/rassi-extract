@@ -14,6 +14,7 @@ from rassi.config import (
     API_MAX_ATTEMPTS,
     API_TIMEOUT_SECONDS,
     IMAGE_DETAIL,
+    PROMPT_CACHE_KEY,
     REASONING_EFFORT_PREFERENCE,
 )
 from rassi.prompt import PROMPT_VERSION, SYSTEM_INSTRUCTIONS, USER_INSTRUCTION
@@ -197,6 +198,7 @@ class PageExtractor:
                 "input": build_input(png_bytes, instruction),
                 "text": {"format": structured_output_format()},
                 "store": False,
+                "prompt_cache_key": PROMPT_CACHE_KEY,
             }
             if effort is not None:
                 request["reasoning"] = {"effort": effort}
