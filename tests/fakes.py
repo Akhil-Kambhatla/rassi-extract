@@ -9,15 +9,21 @@ def make_item(
     agreement_notes: str = "single circle",
     reason_notes: str = "single circle",
     confidence_notes: str = "single circle",
+    agreement_mark_confidence: str = "clear",
+    reason_mark_confidence: str = "clear",
+    confidence_mark_confidence: str = "clear",
 ) -> ItemExtraction:
     return ItemExtraction(
         item_number=item_number,
         agreement_notes=agreement_notes,
         agreement=agreement,
+        agreement_mark_confidence=agreement_mark_confidence,
         reason_notes=reason_notes,
         reason=reason,
+        reason_mark_confidence=reason_mark_confidence,
         confidence_notes=confidence_notes,
         confidence=confidence,
+        confidence_mark_confidence=confidence_mark_confidence,
     )
 
 

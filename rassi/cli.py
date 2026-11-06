@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from rassi.cache import ResponseCache, cache_key
+from rassi.combined import build_combined_outputs
 from rassi.config import (
     CACHED_INPUT_TOKENS_SOURCE,
     DEFAULT_MAX_SPEND_USD,
@@ -39,6 +40,7 @@ from rassi.outputs import (
     build_long_rows,
     build_metrics_rows,
     build_page_failure_flag_rows,
+    build_review_text,
     build_wide_rows,
     flag_counts,
     remove_outputs,
@@ -46,6 +48,7 @@ from rassi.outputs import (
     write_csv,
     write_json,
     write_raw_page,
+    write_text,
 )
 from rassi.paths import DEFAULT_LAYOUT, ENV_FILE, DataLayout, OutputPaths, display_path, output_paths
 from rassi.prompt import PROMPT_VERSION
@@ -409,12 +412,30 @@ def write_results(
     write_csv(paths.wide_csv, wide_columns(), wide_rows)
     write_csv(paths.long_csv, LONG_COLUMNS, long_rows)
     write_csv(paths.flags_csv, FLAG_COLUMNS, flag_rows)
+    write_text(
+        paths.review_txt,
+        build_review_text(students, source.source_pdf, source.teacher_code, source.period, majority_pre_post),
+    )
     status = "complete"
     manifest = build_manifest(
         source, context.model, context.max_spend, selected_pages, run, spend, status, len(students), counts, [], majority_pre_post, stats
     )
+    manifest["review_counts"] = {
+        "double_entries": sum(row["n_multiple"] for row in wide_rows),
+        "values_to_check": sum(row["n_uncertain"] for row in wide_rows),
+        "students_to_check": sum(1 for row in wide_rows if row["check"]),
+        "blank_values": sum(row["n_blank"] for row in wide_rows),
+    }
     write_manifest_and_metrics(paths, manifest, metrics)
-    written = [paths.wide_csv, paths.long_csv, paths.flags_csv, paths.metrics_csv, paths.manifest_json, paths.raw_directory]
+    written = [
+        paths.wide_csv,
+        paths.long_csv,
+        paths.flags_csv,
+        paths.review_txt,
+        paths.metrics_csv,
+        paths.manifest_json,
+        paths.raw_directory,
+    ]
     print_summary(status, len(students), run, spend, counts, written, stats, context.model)
     return outcome(status, len(students))
 
@@ -465,7 +486,7 @@ def manifest_status(manifest_path: Path) -> str | None:
 
 def blocking_outputs(paths: OutputPaths) -> list[Path]:
     existing = paths.existing_files()
-    if existing == [paths.manifest_json] and manifest_status(paths.manifest_json) == STATUS_FAILED_FILE:
+    if len(existing) == 1 and existing[0] in paths.manifest_candidates() and manifest_status(existing[0]) == STATUS_FAILED_FILE:
         return []
     return existing
 
@@ -556,6 +577,17 @@ def print_run_summary(outcomes: list[FileOutcome], problem_count: int, context: 
         print(f"  input problems: {problem_count}, listed at the start of the run")
 
 
+def rebuild_combined_outputs(layout: DataLayout) -> None:
+    combined = build_combined_outputs(layout)
+    print()
+    print(
+        f"COMBINED: {combined.student_count} students from {len(combined.included)} files in "
+        f"{display_path(layout.combined_students_csv)} and {display_path(layout.combined_review_txt)}"
+    )
+    for skipped in combined.skipped_old_format:
+        print(f"  left out {display_path(skipped)}: written by an older version without the review columns; re-extract it with --overwrite")
+
+
 def run_extract(arguments: argparse.Namespace, layout: DataLayout) -> int:
     try:
         prices_for(arguments.model)
@@ -641,6 +673,9 @@ def run_extract(arguments: argparse.Namespace, layout: DataLayout) -> int:
 
     if multiple_files:
         print_run_summary(outcomes, len(discovery.problems), context, time.perf_counter() - run_started)
+
+    if not context.dry_run:
+        rebuild_combined_outputs(layout)
 
     exit_codes = [outcome.exit_code for outcome in outcomes]
     if discovery.problems:

@@ -221,6 +221,7 @@ __marimo__/
 /data/*
 !/data/in/
 !/data/out/
+!/data/details/
 /data/in/*
 !/data/in/.gitkeep
 !/data/in/*/
@@ -228,9 +229,18 @@ __marimo__/
 !/data/in/*/.gitkeep
 /data/out/*
 !/data/out/.gitkeep
+/data/details/*
+!/data/details/.gitkeep
 cache/
 *.pdf
 !/tests/fixtures/*.pdf
 .env
 !/eval/cases/*/crop.png
 eval/results/
+
+.DS_Store
+eval/cases/
+eval/investigations/
+*.png
+*.csv
+*.pdf

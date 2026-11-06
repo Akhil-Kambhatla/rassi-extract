@@ -51,6 +51,16 @@ HEADER_ITEM_NUMBERS = list(range(1, 7))
 CONTINUATION_ITEM_NUMBERS = list(range(7, 13))
 ALL_ITEM_NUMBERS = list(range(1, 13))
 
-NON_NUMERIC_VALUES = ("blank", "ambiguous", "multiple")
-REASON_LETTER_TO_NUMBER = {"a": 1, "b": 2, "c": 3, "d": 4}
+SCALE_OPTIONS = ("1", "2", "3", "4", "5", "6")
+REASON_OPTIONS = ("a", "b", "c", "d")
+FLAG_VALUES = ("blank", "ambiguous")
+MULTIPLE_MARK_SEPARATOR = ","
+MULTIPLE_MARK_FLAG = "multiple"
 REDACTED_SID = "REDACTED"
+
+MARK_CONFIDENCE_CLEAR = "clear"
+MARK_CONFIDENCE_UNSURE = "unsure"
+MARK_CONFIDENCE_VALUES = (MARK_CONFIDENCE_CLEAR, MARK_CONFIDENCE_UNSURE)
+UNSURE_VALUE_MARKER = "?"
+REVIEW_CHECK_WORD = "check"
+COMBINED_DIRECTORY_NAME = "_combined"

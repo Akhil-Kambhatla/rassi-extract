@@ -87,7 +87,8 @@ def test_single_file_writes_every_output_named_from_the_stem(layout, fake_api):
     for path in paths.fixed_files():
         assert path.is_file(), path
     assert [path.name for path in paths.existing_raw_pages()] == [f"020421_PD1_RASSI_page0{number}.json" for number in range(1, 5)]
-    assert sorted(path.name for path in layout.output_root.iterdir()) == ["020421"]
+    assert sorted(path.name for path in layout.output_root.iterdir()) == ["020421", "_combined"]
+    assert sorted(path.name for path in (layout.output_root / "020421").iterdir()) == ["PD1"]
     manifest = json.loads(paths.manifest_json.read_text())
     assert manifest["status"] == "complete"
     assert manifest["pre_post"] == "PRE"
@@ -120,7 +121,7 @@ def test_overwrite_guard_skips_existing_outputs(layout, fake_api, capsys):
     output = capsys.readouterr().out
     assert "outputs already exist" in output
     assert "--overwrite" in output
-    assert "020421_PD1_RASSI_wide.csv" in output
+    assert "020421_PD1_RASSI.csv" in output
     assert paths.wide_csv.read_text() == "sentinel"
     assert len(fake_api.calls) == PAGES_PER_FILE
 
@@ -148,6 +149,22 @@ def test_all_teachers_prints_per_file_and_combined_totals(layout, fake_api, caps
     assert "$0.0640" in total_line
     assert paths_for(layout, "020421_PD1_RASSI.pdf").wide_csv.is_file()
     assert paths_for(layout, "115500_PD2_RASSI.pdf").wide_csv.is_file()
+
+
+def test_two_periods_for_one_teacher_extract_into_separate_period_folders(layout, fake_api):
+    place(layout, "020421/020421_PD1_RASSI.pdf")
+    place(layout, "020421/020421_PD4_RASSI.pdf")
+    assert cli.main(["extract", "--teacher", "020421", "--workers", "1"], layout) == cli.EXIT_OK
+    teacher_directory = layout.output_root / "020421"
+    assert sorted(path.name for path in teacher_directory.iterdir()) == ["PD1", "PD4"]
+    for period in ("1", "4"):
+        paths = paths_for(layout, f"020421_PD{period}_RASSI.pdf")
+        assert paths.directory == teacher_directory / f"PD{period}"
+        assert all(path.is_file() for path in paths.fixed_files())
+        assert sorted(path.name for path in paths.raw_directory.iterdir()) == [
+            f"020421_PD{period}_RASSI_page0{number}.json" for number in range(1, PAGES_PER_FILE + 1)
+        ]
+        assert json.loads(paths.manifest_json.read_text())["source_pdf"] == f"020421_PD{period}_RASSI.pdf"
 
 
 def test_teacher_option_only_processes_that_folder(layout, fake_api):
@@ -275,6 +292,115 @@ def test_unreadable_pdf_in_a_dry_run_writes_nothing(layout, fake_api, monkeypatc
     monkeypatch.setattr(cli, "count_pages", unreadable_count_pages)
     assert cli.main(["extract", "--file", str(pdf), "--dry-run"], layout) == cli.EXIT_INCOMPLETE
     assert not layout.output_root.exists()
+    assert not layout.details_root.exists()
+
+
+def test_dry_run_writes_nothing_in_either_tree(layout, fake_api):
+    place(layout, "020421/020421_PD1_RASSI.pdf")
+    assert cli.main(["extract", "--teacher", "020421", "--dry-run"], layout) == cli.EXIT_OK
+    assert not layout.output_root.exists()
+    assert not layout.details_root.exists()
+    assert fake_api.calls == []
+
+
+def test_complete_file_splits_outputs_between_out_and_details(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_OK
+    out_directory = layout.output_root / "020421" / "PD1"
+    details_directory = layout.details_root / "020421" / "PD1"
+    assert sorted(path.name for path in out_directory.iterdir()) == [
+        "020421_PD1_RASSI.csv",
+        "020421_PD1_RASSI_flags.csv",
+        "020421_PD1_RASSI_review.txt",
+    ]
+    assert sorted(path.name for path in details_directory.iterdir()) == [
+        "020421_PD1_RASSI_long.csv",
+        "020421_PD1_RASSI_manifest.json",
+        "020421_PD1_RASSI_metrics.csv",
+        "raw",
+    ]
+    assert sorted(path.name for path in (details_directory / "raw").iterdir()) == [
+        f"020421_PD1_RASSI_page0{number}.json" for number in range(1, 5)
+    ]
+    assert sorted(path.name for path in (layout.output_root / "_combined").iterdir()) == ["all_review.txt", "all_students.csv"]
+
+
+def test_incomplete_file_writes_flags_to_out_and_manifest_and_metrics_to_details(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    fake_api.output_overrides["020421_PD1_RASSI.pdf|4"] = '{"not": "valid"}'
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_INCOMPLETE
+    out_directory = layout.output_root / "020421" / "PD1"
+    details_directory = layout.details_root / "020421" / "PD1"
+    assert sorted(path.name for path in out_directory.iterdir()) == ["020421_PD1_RASSI_flags.csv"]
+    assert sorted(path.name for path in details_directory.iterdir()) == [
+        "020421_PD1_RASSI_manifest.json",
+        "020421_PD1_RASSI_metrics.csv",
+        "raw",
+    ]
+
+
+def test_failed_file_manifest_goes_to_details_only(layout, fake_api, monkeypatch):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    monkeypatch.setattr(cli, "count_pages", unreadable_count_pages)
+    assert cli.main(["extract", "--file", str(pdf)], layout) == cli.EXIT_INCOMPLETE
+    assert not (layout.output_root / "020421").exists()
+    assert [path.name for path in (layout.details_root / "020421" / "PD1").iterdir()] == ["020421_PD1_RASSI_manifest.json"]
+
+
+def plant(path: Path, text: str = "old") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "details/020421/PD1/020421_PD1_RASSI_long.csv",
+        "details/020421/PD1/raw/020421_PD1_RASSI_page01.json",
+        "out/020421/PD1/020421_PD1_RASSI_wide.csv",
+        "out/020421/PD1/raw/020421_PD1_RASSI_page01.json",
+    ],
+)
+def test_skip_check_finds_outputs_in_either_tree_including_old_names(layout, fake_api, capsys, relative):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    planted = plant(layout.output_root.parent / relative)
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_OK
+    assert "outputs already exist" in capsys.readouterr().out
+    assert planted.read_text() == "old"
+    assert fake_api.calls == []
+
+
+def test_lone_failed_file_manifest_from_the_old_layout_does_not_block(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    old_manifest = plant(layout.output_root / "020421" / "PD1" / "020421_PD1_RASSI_manifest.json", json.dumps({"status": "failed_file"}))
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1"], layout) == cli.EXIT_OK
+    assert not old_manifest.exists()
+    assert paths_for(layout, "020421_PD1_RASSI.pdf").wide_csv.is_file()
+
+
+def test_overwrite_removes_old_layout_files(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    old_directory = layout.output_root / "020421" / "PD1"
+    old_files = [
+        plant(old_directory / name)
+        for name in (
+            "020421_PD1_RASSI_wide.csv",
+            "020421_PD1_RASSI_long.csv",
+            "020421_PD1_RASSI_manifest.json",
+            "020421_PD1_RASSI_metrics.csv",
+            "raw/020421_PD1_RASSI_page01.json",
+            "raw/020421_PD1_RASSI_page09.json",
+        )
+    ]
+    assert cli.main(["extract", "--file", str(pdf), "--workers", "1", "--overwrite"], layout) == cli.EXIT_OK
+    assert not any(path.exists() for path in old_files)
+    assert not (old_directory / "raw").exists()
+    assert sorted(path.name for path in old_directory.iterdir()) == [
+        "020421_PD1_RASSI.csv",
+        "020421_PD1_RASSI_flags.csv",
+        "020421_PD1_RASSI_review.txt",
+    ]
 
 
 def test_page_two_metrics_row_carries_the_sid_of_its_page_one(layout, fake_api):
@@ -400,3 +526,33 @@ def test_invalid_page_response_fails_the_page_and_is_flagged(layout, fake_api, c
     assert cli.main(["extract", "--file", str(pdf), "--workers", "1", "--overwrite"], layout) == cli.EXIT_OK
     assert fake_api.calls.count("020421_PD1_RASSI.pdf|3") == 2
     assert fake_api.calls.count("020421_PD1_RASSI.pdf|1") == 1
+
+
+def test_extract_rebuilds_the_combined_outputs_from_every_processed_file(layout, fake_api, capsys):
+    place(layout, "020421/020421_PD1_RASSI.pdf")
+    place(layout, "020421/020421_PD4_RASSI.pdf")
+    assert cli.main(["extract", "--file", str(layout.input_root / "020421/020421_PD1_RASSI.pdf"), "--workers", "1"], layout) == cli.EXIT_OK
+    assert [row["source_pdf"] for row in read_rows(layout.combined_students_csv)] == ["020421_PD1_RASSI.pdf"] * 2
+
+    assert cli.main(["extract", "--file", str(layout.input_root / "020421/020421_PD4_RASSI.pdf"), "--workers", "1"], layout) == cli.EXIT_OK
+    rows = read_rows(layout.combined_students_csv)
+    assert [(row["source_pdf"], row["sid"]) for row in rows] == [
+        ("020421_PD1_RASSI.pdf", "101"),
+        ("020421_PD1_RASSI.pdf", "103"),
+        ("020421_PD4_RASSI.pdf", "101"),
+        ("020421_PD4_RASSI.pdf", "103"),
+    ]
+    assert all(row["teacher_code"] == "020421" and row["pre_post"] == "PRE" for row in rows)
+    review = layout.combined_review_txt.read_text()
+    assert "===== 020421_PD1_RASSI.pdf =====" in review and "===== 020421_PD4_RASSI.pdf =====" in review
+    paths = paths_for(layout, "020421_PD4_RASSI.pdf")
+    assert paths.review_txt.read_text().startswith("Review list for 020421_PD4_RASSI.pdf\nTeacher 020421, period 4, PRE\n")
+    manifest = json.loads(paths.manifest_json.read_text())
+    assert manifest["review_counts"] == {"double_entries": 0, "values_to_check": 0, "students_to_check": 0, "blank_values": 0}
+    assert "COMBINED: 4 students from 2 files" in capsys.readouterr().out
+
+
+def test_dry_run_does_not_write_combined_outputs(layout, fake_api):
+    pdf = place(layout, "020421/020421_PD1_RASSI.pdf")
+    assert cli.main(["extract", "--file", str(pdf), "--dry-run"], layout) == cli.EXIT_OK
+    assert not layout.combined_output_directory.exists()

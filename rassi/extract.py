@@ -186,14 +186,15 @@ class PageExtractor:
                 self.sleep(delay)
         raise AssertionError("unreachable")
 
-    def request_page(self, png_bytes: bytes, page_number: int) -> ApiCall:
+    def request_page(self, png_bytes: bytes, page_number: int, user_instruction: str | None = None) -> ApiCall:
+        instruction = self.user_instruction if user_instruction is None else user_instruction
         retries = 0
         while True:
             effort = self.current_effort()
             request = {
                 "model": self.model,
                 "instructions": SYSTEM_INSTRUCTIONS,
-                "input": build_input(png_bytes, self.user_instruction),
+                "input": build_input(png_bytes, instruction),
                 "text": {"format": structured_output_format()},
                 "store": False,
             }
